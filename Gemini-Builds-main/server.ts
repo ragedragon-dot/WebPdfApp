@@ -38,7 +38,10 @@ function validateAndGetChatPayload(modelId: string | undefined | null, messages:
   // 1. Initialize and validate that chatRequest is properly initialized as an object before sending
   const chatRequest: any = {
     model: modelId,
-    messages: messages
+    messages: messages.map((m: any) => ({
+      role: m.role,
+      content: m.content
+    }))
   };
 
   if (!chatRequest || typeof chatRequest !== 'object') {
@@ -67,8 +70,8 @@ function validateAndGetChatPayload(modelId: string | undefined | null, messages:
     if (!msg || typeof msg !== 'object') {
       throw new Error(`Validation Error: Message at index ${i} is not a valid object.`);
     }
-    if (!msg.role || !msg.content || typeof msg.role !== 'string' || typeof msg.content !== 'string') {
-      throw new Error(`Validation Error: Message at index ${i} must have 'role' and 'content' as string values.`);
+    if (!msg.role || !msg.content || typeof msg.role !== 'string' || (typeof msg.content !== 'string' && !Array.isArray(msg.content))) {
+      throw new Error(`Validation Error: Message at index ${i} must have 'role' and 'content' as string or array values.`);
     }
   }
 
@@ -195,46 +198,18 @@ async function requestAIChat(messages: any[]) {
   }
 
   const hasImage = messages.some(m => 
-    Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url') && !m.fileName?.match(/\.(mp3|mp4|wav|webm|ogg|csv)$/i)
+    Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')
   );
 
-  const lastMsg = messages[messages.length - 1];
-  let hasMedia = false;
-  let hasCode = false;
-  
-  if (lastMsg && lastMsg.fileName) {
-      const ext = lastMsg.fileName.split('.').pop()?.toLowerCase() || '';
-      if (['mp3', 'mp4', 'wav', 'webm', 'ogg', 'csv'].includes(ext)) {
-          hasMedia = true;
-      } else if (['html', 'css', 'js', 'jsx', 'ts', 'tsx', 'json', 'py', 'java', 'c', 'cpp', 'rs', 'go'].includes(ext)) {
-          hasCode = true;
-      }
-  }
-
-  let CHAT_MODELS;
-  if (hasMedia) {
-      CHAT_MODELS = [
-          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-          "openrouter/free"
-      ];
-  } else if (hasCode) {
-      CHAT_MODELS = [
-          "moonshotai/kimi-k2.6:free",
-          "openrouter/free"
-      ];
-  } else if (hasImage) {
-      CHAT_MODELS = [
-          "google/gemma-2-27b-it",
-          "nvidia/llama-3.1-nemotron-70b-instruct",
-          "openrouter/free"
-      ];
-  } else {
-      CHAT_MODELS = [
-          "openai/gpt-4o-mini",
-          "nousresearch/hermes-3-llama-3.1-405b:free",
-          "openrouter/free"
-      ];
-  }
+  const CHAT_MODELS = hasImage ? [
+      "google/gemma-2-27b-it",
+      "nvidia/llama-3.1-nemotron-70b-instruct",
+      "openrouter/free"
+  ] : [
+      "openai/gpt-4o-mini",
+      "nousresearch/hermes-3-llama-3.1-405b:free",
+      "openrouter/free"
+  ];
 
   for (const modelId of CHAT_MODELS) {
     try {
