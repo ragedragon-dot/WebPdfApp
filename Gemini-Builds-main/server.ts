@@ -187,7 +187,7 @@ app.post("/api/ai/summarize", async (req: any, res: any) => {
   }
 });
 
-async function requestAIChat(messages: any[]) {
+async function requestAIChat(messages: any[], selectedModel?: string) {
   // Ensure the system prompt enforces the 1000 word limit and 3-row limit
   const systemFound = messages.some(m => m.role === 'system');
   if (!systemFound) {
@@ -201,15 +201,20 @@ async function requestAIChat(messages: any[]) {
     Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')
   );
 
-  const CHAT_MODELS = hasImage ? [
-      "google/gemma-2-27b-it",
-      "nvidia/llama-3.1-nemotron-70b-instruct",
-      "openrouter/free"
-  ] : [
-      "openai/gpt-4o-mini",
-      "nousresearch/hermes-3-llama-3.1-405b:free",
-      "openrouter/free"
-  ];
+  let CHAT_MODELS;
+  if (selectedModel && selectedModel !== 'auto') {
+      CHAT_MODELS = [selectedModel];
+  } else {
+      CHAT_MODELS = hasImage ? [
+          "google/gemma-2-27b-it",
+          "nvidia/llama-3.1-nemotron-70b-instruct",
+          "openrouter/free"
+      ] : [
+          "openai/gpt-4o-mini",
+          "nousresearch/hermes-3-llama-3.1-405b:free",
+          "openrouter/free"
+      ];
+  }
 
   for (const modelId of CHAT_MODELS) {
     try {
@@ -224,6 +229,9 @@ async function requestAIChat(messages: any[]) {
       return { message: response.choices[0].message.content, modelUsed: modelId };
     } catch (error: any) {
       console.warn(`Model ${modelId} failed. Reason: ${error.message}`);
+      if (selectedModel && selectedModel !== 'auto') {
+          throw new Error(`The selected model is currently unavailable or failed to process the request. Please choose another one or use Auto. Details: ${error.message}`);
+      }
       continue; 
     }
   }
@@ -243,7 +251,7 @@ async function requestAIChat(messages: any[]) {
 
 // Chat Generator Handler
 app.post("/api/ai/chat", async (req: any, res: any) => {
-  const { messages } = req.body;
+  const { messages, selectedModel } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Messages array is required" });
@@ -254,10 +262,10 @@ app.post("/api/ai/chat", async (req: any, res: any) => {
   }
 
   try {
-    const result = await requestAIChat(messages);
+    const result = await requestAIChat(messages, selectedModel);
     return res.json(result);
   } catch (err: any) {
-    return res.status(503).json({ error: "This file is not supported!" });
+    return res.status(503).json({ error: err.message });
   }
 });
 app.post("/api/ai/flashcards", async (req: any, res: any) => {
