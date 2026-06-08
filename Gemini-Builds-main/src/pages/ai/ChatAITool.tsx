@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import MarkdownRenderer from '../../components/MarkdownRenderer';
 import { useAuth } from '../../hooks/useAuth';
-import { Sparkles, MessageSquare, AlertCircle, Loader2, PlayCircle, Send, Plus, X, File, Image as ImageIcon, Trash2, Copy, CheckCircle2 } from 'lucide-react';
+import { useChatHistory, WebMessage } from '../../hooks/useChatHistory';
+import { Sparkles, MessageSquare, AlertCircle, Loader2, PlayCircle, Send, Plus, X, File, Image as ImageIcon, Trash2, Copy, CheckCircle2, Menu, Edit, Clock, MoreVertical, ChevronRight } from 'lucide-react';
 import { extractTextFromPDF, calculateAICost } from '../../utils/pdfExtractor';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -11,22 +12,47 @@ interface ChatMessage {
   fileName?: string;
 }
 
-interface WebMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  previewUrl?: string; // For images
-  fileName?: string;   // For docs
-}
 
 export default function ChatAITool() {
   const { deductCredits, addCredits, profile } = useAuth();
   
+  const {
+    displayedSessions,
+    saveChatSession,
+    loadMoreSessions,
+    hasMore,
+    loadSession,
+    createNewSession,
+    deleteSession,
+    clearAllHistory,
+    currentSessionId
+  } = useChatHistory();
+
   const [messages, setMessages] = useState<WebMessage[]>([
     { role: 'assistant', content: "Hello! Upload a PDF, image, or text document and ask me questions about it." }
   ]);
   
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const scrollObserverRef = useRef<HTMLDivElement>(null);
+
+  // Intersection Observer for Infinite Scroll
+  useEffect(() => {
+    if (!scrollObserverRef.current || !isSidebarOpen) return;
+    
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && Array.isArray(displayedSessions) && hasMore) {
+        loadMoreSessions();
+      }
+    }, { threshold: 0.1 });
+    
+    observer.observe(scrollObserverRef.current);
+    
+    return () => observer.disconnect();
+  }, [scrollObserverRef, isSidebarOpen, hasMore, loadMoreSessions, displayedSessions]);
+
   const [inputMessage, setInputMessage] = useState('');
-  const [attachedFile, setAttachedFile] = useState<{ file: File; base64?: string; text?: string; type: 'image' | 'pdf' | 'text' | 'media' | 'code' } | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ file: File; base64?: string; text?: string; type: 'image' | 'pdf' | 'text' } | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('auto');
   
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +67,34 @@ export default function ChatAITool() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Save chat session whenever messages update and not typing
+  useEffect(() => {
+    if (messages.length > 1 && !isTyping) {
+      saveChatSession(messages, currentSessionId || undefined);
+    }
+  }, [messages, isTyping, currentSessionId, saveChatSession]);
+
+  const handleCreateNew = () => {
+    createNewSession();
+    setMessages([{ role: 'assistant', content: "Hello! Upload a PDF, image, or text document and ask me questions about it." }]);
+    setError(null);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const handleSelectSession = (id: string) => {
+    const sessionMessages = loadSession(id);
+    if (sessionMessages) {
+      setMessages(sessionMessages);
+      setError(null);
+      if (window.innerWidth < 768) setIsSidebarOpen(false);
+    }
+  };
+
+  const handleClearHistory = () => {
+    clearAllHistory();
+    handleCreateNew();
+  };
 
   const handleCopyMessage = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);
@@ -75,6 +129,10 @@ export default function ChatAITool() {
           const text = await extractTextFromPDF(file);
           setAttachedFile({ file, text, type: 'pdf' });
         } else if (fileType.startsWith('image/')) {
+          if (file.size > 5 * 1024 * 1024) {
+            setError("Image must be smaller than 5MB.");
+            return;
+          }
           const reader = new FileReader();
           reader.onload = (event) => {
             if (event.target && typeof event.target.result === 'string') {
@@ -82,22 +140,11 @@ export default function ChatAITool() {
             }
           };
           reader.readAsDataURL(file);
-        } else if (fileType.startsWith('video/') || fileType.startsWith('audio/') || ['mp3', 'mp4', 'wav', 'webm', 'ogg'].includes(ext)) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            if (event.target && typeof event.target.result === 'string') {
-              setAttachedFile({ file, base64: event.target.result, type: 'media' });
-            }
-          };
-          reader.readAsDataURL(file);
+        } else if (fileType === 'text/plain' || file.name.endsWith('.txt')) {
+          const text = await file.text();
+          setAttachedFile({ file, text, type: 'text' });
         } else {
-          try {
-            const text = await file.text();
-            const isCode = ['html', 'css', 'js', 'jsx', 'ts', 'tsx', 'json', 'py', 'java', 'c', 'cpp', 'rs', 'go'].includes(ext);
-            setAttachedFile({ file, text, type: isCode ? 'code' : 'text' });
-          } catch(e) {
-            setError("Could not read file as text.");
-          }
+          setError("Only Text, PDF, and Images (under 5MB) are supported.");
         }
       } catch (err) {
         setError("Error processing this file.");
@@ -164,14 +211,14 @@ export default function ChatAITool() {
     // For the last message, attach the file context if one was uploaded with this message
     if (attachedFile) {
         const lastMsg = finalApiMessages[finalApiMessages.length - 1];
-        if ((attachedFile.type === 'image' || attachedFile.type === 'media') && attachedFile.base64) {
+        if (attachedFile.type === 'image' && attachedFile.base64) {
             lastMsg.content = [
-                { type: "text", text: inputMessage || `Please analyze this ${attachedFile.type}.` },
+                { type: "text", text: inputMessage || `Please analyze this image.` },
                 { type: "image_url", image_url: { url: attachedFile.base64 } }
             ];
             // Pass fileName for backend detection
             lastMsg.fileName = attachedFile.file.name;
-        } else if ((attachedFile.type === 'pdf' || attachedFile.type === 'text' || attachedFile.type === 'code') && attachedFile.text) {
+        } else if ((attachedFile.type === 'pdf' || attachedFile.type === 'text') && attachedFile.text) {
             lastMsg.content = `Document content attached (${attachedFile.file.name}):\n\n${attachedFile.text.substring(0, 30000)}\n\nUser Question: ${inputMessage || 'Analyze the document.'}`;
             lastMsg.fileName = attachedFile.file.name;
         }
@@ -185,7 +232,7 @@ export default function ChatAITool() {
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: finalApiMessages })
+        body: JSON.stringify({ messages: finalApiMessages, selectedModel })
       });
 
       if (!response.ok) {
@@ -212,20 +259,95 @@ export default function ChatAITool() {
     }
   };
 
-  const handleClearHistory = () => {
-    setMessages([
-        { role: 'assistant', content: "Hello! Upload a PDF, image, or text document and ask me questions about it." }
-    ]);
-    setError(null);
-  };
-
   return (
-    <div className="flex flex-col h-[100dvh] w-full antialiased overflow-hidden bg-slate-50 dark:bg-slate-900 relative">
+    <div className="flex flex-row h-[100dvh] w-full antialiased overflow-hidden bg-white dark:bg-slate-900 relative">
+      
+      {/* Sidebar for Chat History */}
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 dark:bg-black/40 z-40 md:hidden transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+      
+      <div className={`fixed md:relative flex flex-col md:w-72 h-[100dvh] bg-slate-50 dark:bg-slate-900/80 border-r border-slate-200 dark:border-slate-800 z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0 w-[80vw] max-w-sm' : '-translate-x-full w-0 md:w-72'}`}>
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+          <h2 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-indigo-500" />
+            Chat History
+          </h2>
+          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="p-3">
+          <button
+            onClick={handleCreateNew}
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 font-semibold rounded-xl transition-colors border border-indigo-100 dark:border-indigo-500/30"
+          >
+            <Edit className="w-4 h-4" />
+            New Chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 custom-scrollbar pb-4 flex flex-col gap-1">
+          {displayedSessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-400 dark:text-slate-500 text-sm">
+              <MessageSquare className="w-8 h-8 mb-2 opacity-20" />
+              <p>No history yet</p>
+            </div>
+          ) : (
+            displayedSessions.map((session) => (
+              <div 
+                key={session.id}
+                className={`group relative flex items-center gap-2 p-3 rounded-xl cursor-pointer transition-colors ${currentSessionId === session.id ? 'bg-indigo-50 dark:bg-indigo-900/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800/80'}`}
+                onClick={() => handleSelectSession(session.id)}
+              >
+                <div className="flex-1 min-w-0">
+                  <h4 className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                    {session.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                    {new Date(session.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteSession(session.id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md transition-all shrink-0"
+                  title="Delete chat"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+          {/* Intersection Observer Sentinel */}
+          {hasMore && (
+            <div ref={scrollObserverRef} className="h-10 flex items-center justify-center mt-2">
+              <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Main Chat Area flex column */}
+      <div className="flex flex-col flex-1 h-[100dvh] overflow-hidden min-w-0 relative">
       
       {/* Header bar */}
-      <div className="h-14 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between px-6 bg-white dark:bg-slate-900 shrink-0 z-10 shadow-sm relative">
-        <div className="flex flex-row items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-md">
+      <div className="h-14 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between px-4 md:px-6 bg-white dark:bg-slate-900 shrink-0 z-10 shadow-sm relative">
+        <div className="flex flex-row items-center gap-3">
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 md:hidden hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-lg transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="hidden md:flex w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 items-center justify-center shadow-md">
             <MessageSquare className="w-4 h-4 text-white" />
           </div>
           <h3 className="font-bold text-slate-800 dark:text-slate-100 tracking-tight ml-1">Chat with AI</h3>
@@ -399,6 +521,21 @@ export default function ChatAITool() {
                   </motion.div>
               )}
             </AnimatePresence>
+
+            <div className="flex justify-start px-2 py-1">
+                <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500/50"
+                >
+                    <option value="auto">Auto (Best Available)</option>
+                    <option value="openai/gpt-4o-mini">OpenAI (Text)</option>
+                    <option value="nousresearch/hermes-3-llama-3.1-405b:free">Hermes (Text)</option>
+                    <option value="google/gemma-2-27b-it">Google Gemma (Image & Text)</option>
+                    <option value="nvidia/llama-3.1-nemotron-70b-instruct">Nvidia Nemotron (Image & Text)</option>
+                    <option value="openrouter/free">OpenRouter Free (Any)</option>
+                </select>
+            </div>
             
             <form onSubmit={handleSendMessage} className="relative flex items-center bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm focus-within:ring-[3px] focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all overflow-hidden pr-2 w-full">
                 <input 
@@ -435,11 +572,12 @@ export default function ChatAITool() {
                 </button>
             </form>
             <div className="flex justify-center items-center gap-4 mt-1">
-                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">Supports PDF, TXT, CSV, and Images</p>
+                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">Supports PDF, TXT, and Images (&lt;5MB)</p>
                 <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
                 <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">1 Credit / 3000 words or 1 Image</p>
             </div>
         </div>
+      </div>
       </div>
     </div>
   );
