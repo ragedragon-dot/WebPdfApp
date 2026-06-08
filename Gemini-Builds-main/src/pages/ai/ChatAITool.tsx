@@ -271,7 +271,7 @@ export default function ChatAITool() {
         />
       )}
       
-      <div className={`fixed md:relative flex flex-col md:w-72 h-full bg-slate-50 dark:bg-slate-900/80 border-r border-slate-200 dark:border-slate-800 z-40 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0 w-[80vw] max-w-sm' : '-translate-x-full w-0 md:w-72'}`}>
+      <div className={`fixed inset-y-0 left-0 md:relative flex flex-col w-64 md:w-72 h-full bg-slate-50 dark:bg-slate-900/80 border-r border-slate-200 dark:border-slate-800 z-40 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}>
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <h2 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
             <Clock className="w-4 h-4 text-indigo-500" />
@@ -522,7 +522,7 @@ export default function ChatAITool() {
               )}
             </AnimatePresence>
 
-            <form onSubmit={handleSendMessage} className="relative flex items-center bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm focus-within:ring-[3px] focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all overflow-hidden pr-2 w-full">
+            <form onSubmit={handleSendMessage} className="relative flex items-center gap-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm focus-within:ring-[3px] focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all overflow-hidden pr-2">
                 <input 
                     type="file" 
                     id="chat-file-upload" 
@@ -550,7 +550,7 @@ export default function ChatAITool() {
                 
                 <div className="flex items-center gap-1.5 shrink-0">
                     <div 
-                        className={`transition-all duration-300 ease-in-out overflow-hidden flex items-center ${
+                        className={`transition-all duration-300 ease-in-out overflow-hidden flex items-center shrink-0 ${
                             inputMessage.trim() ? 'w-0 opacity-0 pointer-events-none' : 'w-[140px] md:w-[180px] opacity-100'
                         }`}
                     >
